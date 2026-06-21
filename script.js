@@ -172,7 +172,7 @@ async function signNonce(signingKey, nonce) {
 // ── Chain node config ─────────────────────────────────────────────────────────
 // REST/gRPC-gateway endpoint of the running mehrd node.
 // Override by setting window.MEHR_NODE_URL before loading this script.
-var NODE_URL = (window.MEHR_NODE_URL || 'http://localhost:1317').replace(/\/$/, '')
+var NODE_URL = (window.MEHR_NODE_URL || 'https://edge-3.mehrfunds.com:2083').replace(/\/$/, '')
 var CHAIN_ID = window.MEHR_CHAIN_ID || 'mehr-1'
 
 // ── Bech32 (inline) ───────────────────────────────────────────────────────────
