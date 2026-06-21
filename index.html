@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Mehr Funds</title>
+  <meta name="description" content="Mehr Funds dashboard" />
+  <link rel="icon" href="favicon.png" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <!-- ═══════════════════════════════════════════════════════════════════════
+       All visible content lives in <template> tags.
+       Nothing renders until script.js mounts the relevant template.
+  ════════════════════════════════════════════════════════════════════════════ -->
+
+  <template id="tpl-auth">
+    <div id="view-auth">
+      <header class="auth-header">
+        <a class="wordmark" href="https://mehrfunds.com">mehr<b>funds</b></a>
+      </header>
+
+      <div class="auth-wrap">
+        <div class="auth-card">
+          <div class="tabs" role="tablist">
+            <button class="tab active" data-tab="generate" role="tab">New account</button>
+            <button class="tab"        data-tab="import"   role="tab">Import phrase</button>
+          </div>
+
+          <!-- Generate tab -->
+          <div id="tab-generate" class="auth-tab">
+
+            <div class="gen-step" id="gen-intro">
+              <p class="tab-desc">A 24-word recovery phrase will be generated in your browser.<br>Your private key never leaves this device.</p>
+              <button class="btn primary full" id="btn-gen-key">Generate account</button>
+            </div>
+
+            <div class="gen-step hidden" id="gen-show">
+
+              <div class="key-section">
+                <div class="key-section-head">
+                  <span class="key-section-label">Recovery phrase</span>
+                  <button class="btn ghost small" id="btn-dl-phrase">Download .txt</button>
+                </div>
+                <div class="mnemonic-grid" id="mnemonic-grid"></div>
+              </div>
+
+              <div class="key-section">
+                <div class="key-section-head">
+                  <span class="key-section-label">Address</span>
+                  <button class="btn ghost small" id="btn-copy-addr">Copy</button>
+                </div>
+                <pre class="address-box" id="address-box" aria-label="Address"></pre>
+              </div>
+
+              <label class="save-label">
+                <input type="checkbox" id="key-saved" />
+                <span>I've saved my recovery phrase. I know it <strong>cannot be recovered</strong> if lost.</span>
+              </label>
+              <p class="pow-status hidden" id="gen-pow-status"></p>
+              <p class="aform-err hidden" id="gen-err"></p>
+              <button class="btn primary full" id="btn-create-account" disabled>Create account →</button>
+
+            </div>
+
+          </div>
+
+          <!-- Import tab -->
+          <div id="tab-import" class="auth-tab hidden">
+
+            <div class="key-section">
+              <div class="key-section-head">
+                <span class="key-section-label">Recovery phrase</span>
+                <label class="btn ghost small file-btn-inline">
+                  Upload .txt
+                  <input type="file" id="import-phrase-file" accept=".txt" />
+                </label>
+              </div>
+              <textarea
+                id="import-phrase"
+                class="key-textarea phrase-textarea"
+                rows="4"
+                placeholder="witch collapse practice feed shame open despair creek road again ice least core significant frown govern middle vapor remove gravity recruit supply…"
+                spellcheck="false"
+                autocomplete="off"
+              ></textarea>
+            </div>
+
+            <p class="pow-status hidden" id="import-pow-status"></p>
+            <p class="aform-err hidden" id="import-err"></p>
+            <button class="btn primary full" id="btn-sign-in">Sign in</button>
+
+          </div>
+
+        </div>
+      </div>
+    </div>
+  </template>
+
+  <template id="tpl-dashboard">
+    <div id="view-dash">
+      <aside class="sidebar">
+        <a class="wordmark" href="https://mehrfunds.com">mehr<b>funds</b></a>
+        <nav class="snav">
+          <a class="snav-item active" data-view="overview">Overview</a>
+          <a class="snav-item" data-view="accounts">Accounts</a>
+          <a class="snav-item" data-view="watches">Watches</a>
+          <a class="snav-item" data-view="webhooks">Webhooks</a>
+          <a class="snav-item" data-view="keys">API Keys</a>
+        </nav>
+        <div class="sidebar-foot">
+          <div class="zone-badge" id="dash-zone-badge">—</div>
+          <button class="btn ghost small" id="btn-logout">Sign out</button>
+        </div>
+      </aside>
+
+      <div class="dash-body">
+        <header class="dash-header">
+          <h2>Overview</h2>
+        </header>
+
+        <div id="dash-view-overview">
+          <div class="kpi-grid">
+            <div class="kpi kpi-wide"><span class="kpi-label">Address</span><span class="kpi-val mono" id="kpi-address">—</span></div>
+            <div class="kpi"><span class="kpi-label">Active zone</span><span class="kpi-val" id="kpi-zone">—</span></div>
+            <div class="kpi"><span class="kpi-label">Zone status</span><span class="kpi-val accent">Online</span></div>
+          </div>
+        </div>
+
+        <div id="dash-view-accounts" class="hidden"><div class="empty-state"><div class="empty-icon">◎</div><h3>No sub-accounts yet</h3><p>Coming in the next release.</p></div></div>
+        <div id="dash-view-watches" class="hidden">
+          <div class="view-header">
+            <h3>Watches</h3>
+            <button class="btn primary small" id="btn-add-watch">Add watch</button>
+          </div>
+          <div class="form-card hidden" id="form-watch">
+            <div class="form-row">
+              <label>EVM address</label>
+              <input type="text" id="watch-address" placeholder="0x…" spellcheck="false" autocomplete="off" />
+            </div>
+            <div class="form-row-2">
+              <div class="form-row">
+                <label>Network</label>
+                <select id="watch-network">
+                  <option value="ethereum">Ethereum</option>
+                  <option value="base">Base</option>
+                  <option value="polygon">Polygon</option>
+                  <option value="arbitrum">Arbitrum</option>
+                  <option value="optimism">Optimism</option>
+                  <option value="bnb">BNB Chain</option>
+                </select>
+              </div>
+              <div class="form-row">
+                <label>Label <span class="form-optional">(optional)</span></label>
+                <input type="text" id="watch-label" placeholder="My wallet" autocomplete="off" />
+              </div>
+            </div>
+            <p class="form-err hidden" id="watch-err"></p>
+            <div class="form-actions">
+              <button class="btn ghost small" id="btn-cancel-watch">Cancel</button>
+              <button class="btn primary small" id="btn-save-watch">Add watch →</button>
+            </div>
+          </div>
+          <div id="watch-list"></div>
+        </div>
+
+        <div id="dash-view-webhooks" class="hidden">
+          <div class="view-header">
+            <h3>Webhooks</h3>
+            <button class="btn primary small" id="btn-add-webhook">Add endpoint</button>
+          </div>
+          <div class="form-card hidden" id="form-webhook">
+            <div class="form-row">
+              <label>Endpoint URL</label>
+              <input type="url" id="webhook-url" placeholder="https://…" spellcheck="false" autocomplete="off" />
+            </div>
+            <div class="form-row">
+              <label>Signing secret <span class="form-optional">(save this — shown once)</span></label>
+              <div class="secret-row">
+                <input type="text" id="webhook-secret" class="mono-input" readonly spellcheck="false" />
+                <button class="btn ghost small" id="btn-copy-secret">Copy</button>
+              </div>
+            </div>
+            <p class="form-err hidden" id="webhook-err"></p>
+            <div class="form-actions">
+              <button class="btn ghost small" id="btn-cancel-webhook">Cancel</button>
+              <button class="btn primary small" id="btn-save-webhook">Add endpoint →</button>
+            </div>
+          </div>
+          <div id="webhook-list"></div>
+        </div>
+        <div id="dash-view-keys"     class="hidden"><div class="empty-state"><div class="empty-icon">◈</div><h3>No API keys</h3><p>Create a key for programmatic access.</p></div></div>
+      </div>
+    </div>
+  </template>
+
+  <script src="nacl.min.js"></script>
+  <script src="script.js"></script>
+</body>
+</html>
