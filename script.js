@@ -375,8 +375,7 @@ async function loadOverview() {
     }
     if (nodeRes.ok) {
       var nodeData = await nodeRes.json()
-      setText('kpi-chain',  nodeData.default_node_info.network)
-      setText('kpi-height', '#' + (nodeData.default_node_info.other ? '' : ''))
+      setText('kpi-chain', nodeData.default_node_info.network)
     }
   } catch {}
 
