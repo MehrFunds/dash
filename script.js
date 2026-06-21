@@ -325,112 +325,7 @@ async function broadcastTx(kp, typeUrl, msgBytes) {
 
 // ── Zone directory ────────────────────────────────────────────────────────────
 
-var ZONE_DIRECTORY = {
-  account: [
-    { id: 0, name: 'accounts-0 · eu-west',  url: 'https://accounts-0.mehrfunds.com' },
-    { id: 1, name: 'accounts-1 · us-east',  url: 'https://accounts-1.mehrfunds.com' },
-    { id: 2, name: 'accounts-2 · ap-south', url: 'https://accounts-2.mehrfunds.com' },
-  ],
-  watch: [
-    { id: 0, name: 'watch-0 · eu-west', url: 'https://watch-0.mehrfunds.com' },
-    { id: 1, name: 'watch-1 · us-east', url: 'https://watch-1.mehrfunds.com' },
-  ],
-  webhook: [
-    { id: 0, name: 'hooks-0 · eu-west', url: 'https://hooks-0.mehrfunds.com' },
-  ],
-}
 
-var ALL_ZONES = Object.entries(ZONE_DIRECTORY).flatMap(function(_ref) {
-  var type = _ref[0], zones = _ref[1]
-  return zones.map(function(z) { return Object.assign({}, z, { type: type }) })
-})
-
-// ── Zone health ───────────────────────────────────────────────────────────────
-
-var zoneHealth = new Map(
-  ALL_ZONES.map(function(z) { return [`${z.type}:${z.id}`, { status: 'pending', ms: null, meta: null }] })
-)
-
-async function pingZone(zone) {
-  var key = `${zone.type}:${zone.id}`
-  var t   = performance.now()
-  try {
-    var res  = await fetch(`${zone.url}/health`, { signal: AbortSignal.timeout(3000), cache: 'no-store' })
-    var ms   = Math.round(performance.now() - t)
-    var meta = await res.json().catch(function() { return null })
-    zoneHealth.set(key, { status: !res.ok ? 'offline' : ms > 1500 ? 'slow' : 'online', ms: ms, meta: meta })
-  } catch {
-    zoneHealth.set(key, { status: 'offline', ms: null, meta: null })
-  }
-}
-
-// ── Zone selection ────────────────────────────────────────────────────────────
-
-function rankedZones(type) {
-  var rank = function(s) { return s === 'online' ? 0 : s === 'slow' ? 1 : 9 }
-  return ZONE_DIRECTORY[type]
-    .map(function(z) { return Object.assign({}, z, zoneHealth.get(`${type}:${z.id}`)) })
-    .sort(function(a, b) {
-      var dr = rank(a.status) - rank(b.status)
-      return dr !== 0 ? dr : (a.ms != null ? a.ms : Infinity) - (b.ms != null ? b.ms : Infinity)
-    })
-}
-
-async function tryZoneType(type, path, opts, preferZoneId) {
-  opts = opts || {}
-  var ordered = rankedZones(type).filter(function(z) { return z.status !== 'offline' })
-  if (!ordered.length) ordered = rankedZones(type)
-
-  if (preferZoneId != null) {
-    var idx = ordered.findIndex(function(z) { return z.id === preferZoneId })
-    if (idx > 0) ordered = [ordered[idx]].concat(ordered.filter(function(_, i) { return i !== idx }))
-  }
-
-  var errors = []
-  for (var i = 0; i < ordered.length; i++) {
-    var zone = ordered[i]
-    try {
-      var res = await fetch(`${zone.url}${path}`, Object.assign(
-        { signal: AbortSignal.timeout(8000) },
-        opts,
-        { headers: Object.assign({ 'Content-Type': 'application/json' }, opts.headers || {}) }
-      ))
-      return { zone: zone, res: res }
-    } catch (e) {
-      errors.push(`${zone.name}: ${e.message}`)
-    }
-  }
-  throw new Error(`All ${type} zones unreachable.\n${errors.join('\n')}`)
-}
-
-// ── Zone affinity cache ───────────────────────────────────────────────────────
-
-var AFFINITY_KEY = 'mf_affinity'
-
-function affinityGet(type, id) {
-  try {
-    var store = JSON.parse(localStorage.getItem(AFFINITY_KEY) || '{}')
-    if (id != null && store[`${type}:${id}`] != null) return store[`${type}:${id}`]
-    return store[`${type}:*`] != null ? store[`${type}:*`] : null
-  } catch { return null }
-}
-
-function affinitySet(type, id, zoneId) {
-  try {
-    var store = JSON.parse(localStorage.getItem(AFFINITY_KEY) || '{}')
-    if (id != null) store[`${type}:${id}`] = zoneId
-    store[`${type}:*`] = zoneId
-    localStorage.setItem(AFFINITY_KEY, JSON.stringify(store))
-  } catch {}
-}
-
-function affinityClearSession() {
-  try {
-    var store = JSON.parse(localStorage.getItem(AFFINITY_KEY) || '{}')
-    Object.keys(store).filter(function(k) { return k.endsWith(':*') }).forEach(function(k) { delete store[k] })
-    localStorage.setItem(AFFINITY_KEY, JSON.stringify(store))
-  } catch {}
-}
 
 // ── Session ───────────────────────────────────────────────────────────────────
 
@@ -449,93 +344,11 @@ function sessionClear() { sessionStorage.removeItem(SESSION_KEY) }
 
 var _activeKey = null
 
-// ── Proof of Work ─────────────────────────────────────────────────────────────
+// ── Auth ──────────────────────────────────────────────────────────────────────
 
-var POW_WORKER_SRC = `
-  function hasLeadingZeroBits(hash, bits) {
-    var fullBytes = Math.floor(bits / 8)
-    for (var i = 0; i < fullBytes; i++) { if (hash[i] !== 0) return false }
-    var rem = bits % 8
-    if (rem > 0) { var mask = (0xff << (8 - rem)) & 0xff; if ((hash[fullBytes] & mask) !== 0) return false }
-    return true
-  }
-  var enc = new TextEncoder()
-  self.onmessage = async function(e) {
-    var prefix = e.data.prefix, difficulty = e.data.difficulty
-    var nonce = 0
-    while (true) {
-      var buf  = enc.encode(prefix + ':' + nonce)
-      var hash = new Uint8Array(await crypto.subtle.digest('SHA-256', buf))
-      if (hasLeadingZeroBits(hash, difficulty)) {
-        var hex = Array.from(hash).map(function(b) { return b.toString(16).padStart(2, '0') }).join('')
-        self.postMessage({ nonce: nonce, hash: hex }); return
-      }
-      nonce++
-    }
-  }
-`
-
-function solvePoW(prefix, difficulty) {
-  return new Promise(function(resolve, reject) {
-    var blob   = new Blob([POW_WORKER_SRC], { type: 'application/javascript' })
-    var url    = URL.createObjectURL(blob)
-    var worker = new Worker(url)
-    worker.onmessage = function(e) { worker.terminate(); URL.revokeObjectURL(url); resolve(e.data) }
-    worker.onerror   = function(e) { worker.terminate(); URL.revokeObjectURL(url); reject(new Error('PoW failed: ' + e.message)) }
-    worker.postMessage({ prefix: prefix, difficulty: difficulty })
-  })
-}
-
-// ── Account API ───────────────────────────────────────────────────────────────
-
-async function createAccount(kp, pow) {
-  var pubKeyHex = toHex(kp.pubKey)
-  var result = await tryZoneType('account', '/v1/accounts', {
-    method: 'POST',
-    body: JSON.stringify({ public_key: pubKeyHex, account_id: kp.address, pow_prefix: pow.prefix, pow_nonce: pow.nonce }),
-  })
-  if (!result.res.ok) {
-    var err = await result.res.json().catch(function() { return {} })
-    throw new Error(err.message || `Registration failed (${result.res.status})`)
-  }
-  var data = await result.res.json()
-  affinitySet('account', kp.address, result.zone.id)
+function sessionFromKeypair(kp) {
   _activeKey = kp
-  sessionSave({ token: data.token, address: kp.address, bech32_address: kp.bech32Address, pub_key: pubKeyHex, account_zone_id: result.zone.id, account_zone_name: result.zone.name })
-}
-
-async function authenticateWithKey(kp) {
-  var pubKeyHex = toHex(kp.pubKey)
-  var preferred = affinityGet('account', kp.address)
-
-  var chalResult = await tryZoneType('account', '/v1/auth/challenge', {
-    method: 'POST',
-    body: JSON.stringify({ public_key: pubKeyHex }),
-  }, preferred)
-  if (!chalResult.res.ok) {
-    var err = await chalResult.res.json().catch(function() { return {} })
-    throw new Error(err.message || `Account not found (${chalResult.res.status})`)
-  }
-  var chal = await chalResult.res.json()
-
-  var results = await Promise.all([
-    signNonce(kp.signingKey, chal.nonce),
-    solvePoW(chal.pow_prefix, chal.difficulty),
-  ])
-  var signature = results[0], pow = results[1]
-
-  var verifyResult = await tryZoneType('account', '/v1/auth/verify', {
-    method: 'POST',
-    body: JSON.stringify({ public_key: pubKeyHex, nonce: chal.nonce, signature: signature, pow_prefix: chal.pow_prefix, pow_nonce: pow.nonce }),
-  }, chalResult.zone.id)
-  if (!verifyResult.res.ok) {
-    var err = await verifyResult.res.json().catch(function() { return {} })
-    throw new Error(err.message || `Authentication failed (${verifyResult.res.status})`)
-  }
-  var data = await verifyResult.res.json()
-  affinitySet('account', kp.address, chalResult.zone.id)
-  _activeKey = kp
-  sessionSave({ token: data.token, address: kp.address, bech32_address: kp.bech32Address, pub_key: pubKeyHex, account_zone_id: chalResult.zone.id, account_zone_name: chalResult.zone.name })
+  sessionSave({ bech32_address: kp.bech32Address, address: kp.address, pub_key: toHex(kp.pubKey) })
 }
 
 // ── Views ─────────────────────────────────────────────────────────────────────
@@ -549,10 +362,7 @@ function showLanding() {
 function showDashboard() {
   el('view-auth').style.display = 'none'
   el('view-dash').style.display = ''
-  var s = session()
-  setText('kpi-address',     s.address || '—')
-  setText('kpi-zone',        s.account_zone_name || '—')
-  setText('dash-zone-badge', s.account_zone_name || '—')
+  setText('kpi-address', session('bech32_address') || '—')
   switchDashView('overview')
 }
 
@@ -595,18 +405,15 @@ function setPowStatus(id, msg) {
 // ── Generate flow ─────────────────────────────────────────────────────────────
 
 var _pendingKeypair = null
-var _pendingPow     = null
 
 function resetGenFlow() {
   _pendingKeypair = null
-  _pendingPow     = null
   el('gen-intro').classList.remove('hidden')
   el('gen-show').classList.add('hidden')
   el('key-saved').checked           = false
   el('btn-create-account').disabled = true
   el('mnemonic-grid').innerHTML     = ''
   el('address-box').textContent     = ''
-  setPowStatus('gen-pow-status', null)
   clearErrors()
 }
 
@@ -625,22 +432,10 @@ async function onGenerateKey() {
     _pendingKeypair = await deriveKeypair(mnemonic)
 
     renderMnemonicGrid(mnemonic.split(' '))
-    el('address-box').textContent = _pendingKeypair.address
+    el('address-box').textContent = _pendingKeypair.bech32Address
     el('gen-intro').classList.add('hidden')
     el('gen-show').classList.remove('hidden')
 
-    _pendingPow = (async function() {
-      setPowStatus('gen-pow-status', 'Preparing proof of work…')
-      var result = await tryZoneType('account', '/v1/auth/pow-challenge', { method: 'POST' })
-      if (!result.res.ok) throw new Error('Could not get PoW challenge')
-      var data = await result.res.json()
-      setPowStatus('gen-pow-status', 'Solving proof of work…')
-      var pow = await solvePoW(data.prefix, data.difficulty)
-      pow.prefix = data.prefix
-      setPowStatus('gen-pow-status', null)
-      return pow
-    })()
-    _pendingPow.catch(function() {})
   } catch (err) {
     btn.disabled    = false
     btn.textContent = 'Generate account'
@@ -649,23 +444,9 @@ async function onGenerateKey() {
 }
 
 async function onCreateAccount() {
-  if (!_pendingKeypair || !_pendingPow) return
-  var btn = el('btn-create-account')
-  btn.disabled    = true
-  btn.textContent = 'Working…'
-  try {
-    setPowStatus('gen-pow-status', 'Finishing proof of work…')
-    var pow = await _pendingPow
-    setPowStatus('gen-pow-status', null)
-    btn.textContent = 'Creating account…'
-    await createAccount(_pendingKeypair, pow)
-    showDashboard()
-  } catch (err) {
-    btn.disabled    = false
-    btn.textContent = 'Create account →'
-    setPowStatus('gen-pow-status', null)
-    showError('gen-err', err.message)
-  }
+  if (!_pendingKeypair) return
+  sessionFromKeypair(_pendingKeypair)
+  showDashboard()
 }
 
 function downloadPhrase(mnemonic) {
@@ -698,9 +479,7 @@ async function onImportKeys() {
     }
 
     var kp = await deriveKeypair(words.join(' '))
-    setPowStatus('import-pow-status', 'Solving proof of work…')
-    await authenticateWithKey(kp)
-    setPowStatus('import-pow-status', null)
+    sessionFromKeypair(kp)
     showDashboard()
   } catch (err) {
     setPowStatus('import-pow-status', null)
@@ -711,14 +490,6 @@ async function onImportKeys() {
   }
 }
 
-// apiRequest wraps tryZoneType with the session bearer token attached.
-async function apiRequest(type, path, opts) {
-  opts = opts || {}
-  var tok = session('token')
-  var headers = Object.assign({}, opts.headers || {})
-  if (tok) headers['Authorization'] = 'Bearer ' + tok
-  return tryZoneType(type, path, Object.assign({}, opts, { headers: headers }), affinityGet(type, null))
-}
 
 // ── Networks ──────────────────────────────────────────────────────────────────
 
@@ -757,16 +528,10 @@ function renderWatches() {
 
 async function loadWatches() {
   var bech32 = _activeKey && _activeKey.bech32Address
-  if (bech32 && await nodeReachable()) {
-    try {
-      var r = await fetch(NODE_URL + '/mehr/v1/watches/' + bech32, { signal: AbortSignal.timeout(5000) })
-      if (r.ok) { var d = await r.json(); _watches = d.watches || []; renderWatches(); return }
-    } catch {}
-  }
-  // Fallback: REST API zone
+  if (!bech32) { renderWatches(); return }
   try {
-    var result = await apiRequest('account', '/v1/watches')
-    if (result.res.ok) { var data = await result.res.json(); _watches = data.watches || [] }
+    var r = await fetch(NODE_URL + '/mehr/v1/watches/' + bech32, { signal: AbortSignal.timeout(5000) })
+    if (r.ok) { var d = await r.json(); _watches = d.watches || [] }
   } catch {}
   renderWatches()
 }
@@ -784,29 +549,12 @@ async function saveWatch() {
   var btn = el('btn-save-watch')
   btn.disabled = true; btn.textContent = 'Adding…'
   try {
-    if (_activeKey && await nodeReachable()) {
-      var msg = pbMsgCreateWatch(_activeKey.bech32Address, network, address, label)
-      await broadcastTx(_activeKey, '/mehr.v1.MsgCreateWatch', msg)
-      closeWatchForm()
-      await loadWatches()
-      return
-    }
-    // Fallback: REST API
-    var result = await apiRequest('account', '/v1/watches', {
-      method: 'POST',
-      body: JSON.stringify({ address: address, network: network, label: label }),
-    })
-    if (!result.res.ok) {
-      var err = await result.res.json().catch(function() { return {} })
-      showFormErr('watch-err', err.message || 'Failed to add watch.')
-      return
-    }
-    var data = await result.res.json()
-    _watches.push(data)
+    var msg = pbMsgCreateWatch(_activeKey.bech32Address, network, address, label)
+    await broadcastTx(_activeKey, '/mehr.v1.MsgCreateWatch', msg)
     closeWatchForm()
-    renderWatches()
+    await loadWatches()
   } catch (e) {
-    showFormErr('watch-err', e.message || 'Could not reach server.')
+    showFormErr('watch-err', e.message || 'Could not reach node.')
   } finally {
     btn.disabled = false; btn.textContent = 'Add watch →'
   }
@@ -814,12 +562,8 @@ async function saveWatch() {
 
 async function deleteWatch(id) {
   try {
-    if (_activeKey && await nodeReachable()) {
-      var msg = pbMsgDeleteWatch(_activeKey.bech32Address, id)
-      await broadcastTx(_activeKey, '/mehr.v1.MsgDeleteWatch', msg)
-    } else {
-      await apiRequest('account', '/v1/watches/' + id, { method: 'DELETE' })
-    }
+    var msg = pbMsgDeleteWatch(_activeKey.bech32Address, id)
+    await broadcastTx(_activeKey, '/mehr.v1.MsgDeleteWatch', msg)
   } catch {}
   _watches = _watches.filter(function(w) { return String(w.id) !== String(id) })
   renderWatches()
@@ -870,16 +614,10 @@ function renderWebhooks() {
 
 async function loadWebhooks() {
   var bech32 = _activeKey && _activeKey.bech32Address
-  if (bech32 && await nodeReachable()) {
-    try {
-      var r = await fetch(NODE_URL + '/mehr/v1/webhooks/' + bech32, { signal: AbortSignal.timeout(5000) })
-      if (r.ok) { var d = await r.json(); _webhooks = d.webhooks || []; renderWebhooks(); return }
-    } catch {}
-  }
-  // Fallback: REST API zone
+  if (!bech32) { renderWebhooks(); return }
   try {
-    var result = await apiRequest('account', '/v1/webhooks')
-    if (result.res.ok) { var data = await result.res.json(); _webhooks = data.webhooks || [] }
+    var r = await fetch(NODE_URL + '/mehr/v1/webhooks/' + bech32, { signal: AbortSignal.timeout(5000) })
+    if (r.ok) { var d = await r.json(); _webhooks = d.webhooks || [] }
   } catch {}
   renderWebhooks()
 }
@@ -896,33 +634,15 @@ async function saveWebhook() {
   var btn = el('btn-save-webhook')
   btn.disabled = true; btn.textContent = 'Adding…'
   try {
-    if (_activeKey && await nodeReachable()) {
-      // Store a sha256 hash of the secret on-chain (secret itself stays in browser)
-      var secretBytes  = new TextEncoder().encode(secret)
-      var secretHashBuf = await crypto.subtle.digest('SHA-256', secretBytes)
-      var secretHash   = toHex(secretHashBuf)
-      var msg = pbMsgCreateWebhook(_activeKey.bech32Address, url, secretHash)
-      await broadcastTx(_activeKey, '/mehr.v1.MsgCreateWebhook', msg)
-      closeWebhookForm()
-      await loadWebhooks()
-      return
-    }
-    // Fallback: REST API
-    var result = await apiRequest('account', '/v1/webhooks', {
-      method: 'POST',
-      body: JSON.stringify({ url: url, secret: secret }),
-    })
-    if (!result.res.ok) {
-      var err = await result.res.json().catch(function() { return {} })
-      showFormErr('webhook-err', err.message || 'Failed to add endpoint.')
-      return
-    }
-    var data = await result.res.json()
-    _webhooks.push(data)
+    var secretBytes   = new TextEncoder().encode(secret)
+    var secretHashBuf = await crypto.subtle.digest('SHA-256', secretBytes)
+    var secretHash    = toHex(secretHashBuf)
+    var msg = pbMsgCreateWebhook(_activeKey.bech32Address, url, secretHash)
+    await broadcastTx(_activeKey, '/mehr.v1.MsgCreateWebhook', msg)
     closeWebhookForm()
-    renderWebhooks()
+    await loadWebhooks()
   } catch (e) {
-    showFormErr('webhook-err', e.message || 'Could not reach server.')
+    showFormErr('webhook-err', e.message || 'Could not reach node.')
   } finally {
     btn.disabled = false; btn.textContent = 'Add endpoint →'
   }
@@ -930,12 +650,8 @@ async function saveWebhook() {
 
 async function deleteWebhook(id) {
   try {
-    if (_activeKey && await nodeReachable()) {
-      var msg = pbMsgDeleteWebhook(_activeKey.bech32Address, id)
-      await broadcastTx(_activeKey, '/mehr.v1.MsgDeleteWebhook', msg)
-    } else {
-      await apiRequest('account', '/v1/webhooks/' + id, { method: 'DELETE' })
-    }
+    var msg = pbMsgDeleteWebhook(_activeKey.bech32Address, id)
+    await broadcastTx(_activeKey, '/mehr.v1.MsgDeleteWebhook', msg)
   } catch {}
   _webhooks = _webhooks.filter(function(w) { return String(w.id) !== String(id) })
   renderWebhooks()
@@ -979,7 +695,7 @@ function boot() {
   mount('tpl-auth')
   mount('tpl-dashboard')
   wireEvents()
-  if (session('token')) showDashboard()
+  if (session('bech32_address')) showDashboard()
   else showLanding()
 }
 
@@ -997,7 +713,6 @@ function wireEvents() {
 
   el('btn-logout').addEventListener('click', function() {
     _activeKey = null
-    affinityClearSession()
     sessionClear()
     showLanding()
   })
