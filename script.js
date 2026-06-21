@@ -359,11 +359,42 @@ function showLanding() {
   resetGenFlow()
 }
 
+async function loadOverview() {
+  var bech32 = session('bech32_address')
+  if (!bech32) return
+  try {
+    var [balRes, nodeRes] = await Promise.all([
+      fetch(NODE_URL + '/cosmos/bank/v1beta1/balances/' + bech32, { signal: AbortSignal.timeout(5000) }),
+      fetch(NODE_URL + '/cosmos/base/tendermint/v1beta1/node_info',  { signal: AbortSignal.timeout(5000) }),
+    ])
+    if (balRes.ok) {
+      var balData  = await balRes.json()
+      var umehr    = (balData.balances || []).find(function(b) { return b.denom === 'umehr' })
+      var amount   = umehr ? (parseInt(umehr.amount) / 1e6).toLocaleString(undefined, { maximumFractionDigits: 6 }) : '0'
+      setText('kpi-balance', amount + ' MEHR')
+    }
+    if (nodeRes.ok) {
+      var nodeData = await nodeRes.json()
+      setText('kpi-chain',  nodeData.default_node_info.network)
+      setText('kpi-height', '#' + (nodeData.default_node_info.other ? '' : ''))
+    }
+  } catch {}
+
+  try {
+    var blkRes = await fetch(NODE_URL + '/cosmos/base/tendermint/v1beta1/blocks/latest', { signal: AbortSignal.timeout(5000) })
+    if (blkRes.ok) {
+      var blkData = await blkRes.json()
+      setText('kpi-height', '#' + blkData.block.header.height)
+    }
+  } catch {}
+}
+
 function showDashboard() {
   el('view-auth').style.display = 'none'
   el('view-dash').style.display = ''
   setText('kpi-address', session('bech32_address') || '—')
   switchDashView('overview')
+  loadOverview()
 }
 
 function switchDashView(name) {
