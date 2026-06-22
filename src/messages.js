@@ -1,12 +1,11 @@
-import _m0 from 'protobufjs/minimal'
+import _m0 from 'https://esm.sh/protobufjs@6.11.6/minimal'
 
 // Minimal protobuf type definitions for mehr chain custom messages.
-// These implement the GeneratedType interface CosmJS expects from a Registry entry,
-// using protobufjs/minimal (a transitive dep of @cosmjs/proto-signing).
+// Implements the GeneratedType interface expected by CosmJS Registry.
 //
 // Field tags = (field_number << 3) | wire_type
-//   string  → wire type 2 → 0x0a (1), 0x12 (2), 0x1a (3), 0x22 (4)
-//   uint64  → wire type 0 → 0x10 (2)
+//   string → wire type 2 → 0x0a (1), 0x12 (2), 0x1a (3), 0x22 (4)
+//   uint64 → wire type 0 → 0x10 (2)
 
 export const MsgCreateWatch = {
   encode({ creator = '', network = '', address = '', label = '' }, writer = _m0.Writer.create()) {
@@ -17,9 +16,7 @@ export const MsgCreateWatch = {
     return writer
   },
   decode() { return {} },
-  fromPartial(o) {
-    return { creator: o.creator ?? '', network: o.network ?? '', address: o.address ?? '', label: o.label ?? '' }
-  },
+  fromPartial(o) { return { creator: o.creator ?? '', network: o.network ?? '', address: o.address ?? '', label: o.label ?? '' } },
 }
 
 export const MsgDeleteWatch = {
