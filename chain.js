@@ -1,5 +1,5 @@
-import { DirectSecp256k1HdWallet, Registry, SigningStargateClient, defaultRegistryTypes, TxRaw } from '/vendor/cosmjs-bundle.js'
-import { MsgCreateWatch, MsgDeleteWatch, MsgCreateWebhook, MsgDeleteWebhook } from './messages.js'
+import { DirectSecp256k1HdWallet, Registry, SigningStargateClient, defaultRegistryTypes, TxRaw } from '/cosmjs-bundle.js'
+import { MsgCreateWatch, MsgDeleteWatch, MsgCreateWebhook, MsgDeleteWebhook } from '/messages.js'
 
 export const NODE_URL = (window.MEHR_NODE_URL || 'https://edge-3.mehrfunds.com:2083').replace(/\/$/, '')
 export const CHAIN_ID = window.MEHR_CHAIN_ID || 'mehr-1'

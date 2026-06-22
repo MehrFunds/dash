@@ -1,6 +1,5 @@
-import { Bip39, EnglishMnemonic, Random } from '/vendor/cosmjs-bundle.js'
-import { NODE_URL } from './chain.js'
-import { walletFromMnemonic, getWalletAddress, broadcastMsg } from './chain.js'
+import { Bip39, EnglishMnemonic, Random } from '/cosmjs-bundle.js'
+import { NODE_URL, walletFromMnemonic, getWalletAddress, broadcastMsg } from '/chain.js'
 
 // ── Session ───────────────────────────────────────────────────────────────────
 

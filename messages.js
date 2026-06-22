@@ -1,4 +1,4 @@
-import { protobufMinimal as _m0 } from '/vendor/cosmjs-bundle.js'
+import { protobufMinimal as _m0 } from '/cosmjs-bundle.js'
 
 // Minimal protobuf type definitions for mehr chain custom messages.
 // Implements the GeneratedType interface expected by CosmJS Registry.
