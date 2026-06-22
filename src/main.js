@@ -17,19 +17,63 @@ function session(key) {
 }
 function sessionClear() { sessionStorage.removeItem(SESSION_KEY) }
 
-// ── Auth ──────────────────────────────────────────────────────────────────────
+function saveSession() {
+  sessionSave({
+    wallets: _wallets.map(function(w) { return w.address }),
+    activeIndex: _activeIndex,
+  })
+}
 
-var _activeWallet = null
+// ── Wallet state ──────────────────────────────────────────────────────────────
 
-async function sessionFromWallet(wallet) {
-  _activeWallet = wallet
-  const address = await getWalletAddress(wallet)
-  sessionSave({ bech32_address: address })
+var _wallets     = []   // [{ wallet: DirectSecp256k1HdWallet, address: string }]
+var _activeIndex = 0
+
+function activeAddress() {
+  if (_wallets.length > 0 && _wallets[_activeIndex]) return _wallets[_activeIndex].address
+  // readonly fallback after page reload (no private key, but address known)
+  var saved = session('wallets')
+  if (saved && saved.length > 0) return saved[session('activeIndex') || 0] || saved[0]
+  return session('bech32_address') || null   // backward-compat with old single-wallet session
 }
 
 function requireWallet() {
-  if (!_activeWallet) throw new Error('Session expired — please sign in again to make changes.')
-  return _activeWallet
+  var w = _wallets[_activeIndex]
+  if (!w) throw new Error('Session expired — sign in again to make changes.')
+  return w.wallet
+}
+
+async function addWallet(wallet) {
+  var address = await getWalletAddress(wallet)
+  var existing = _wallets.findIndex(function(w) { return w.address === address })
+  if (existing >= 0) {
+    _activeIndex = existing
+  } else {
+    _wallets.push({ wallet: wallet, address: address })
+    _activeIndex = _wallets.length - 1
+  }
+  saveSession()
+}
+
+function switchToWallet(index) {
+  if (!_wallets[index]) return
+  _activeIndex = index
+  saveSession()
+  updateSidebarWallet()
+  renderAccounts()
+  // refresh whichever view is active
+  var active = document.querySelector('.snav-item.active')
+  var view   = active ? active.dataset.view : 'overview'
+  if (view === 'overview')  loadOverview()
+  if (view === 'watches')   loadWatches()
+  if (view === 'webhooks')  loadWebhooks()
+}
+
+function updateSidebarWallet() {
+  var addr = activeAddress()
+  setText('kpi-address', addr || '—')
+  var short = addr ? (addr.slice(0, 10) + '…' + addr.slice(-6)) : '—'
+  setText('sidebar-wallet-addr', short)
 }
 
 // ── Views ─────────────────────────────────────────────────────────────────────
@@ -41,7 +85,7 @@ function showLanding() {
 }
 
 async function loadOverview() {
-  var bech32 = session('bech32_address')
+  var bech32 = activeAddress()
   if (!bech32) return
   try {
     var [balRes, nodeRes] = await Promise.all([
@@ -72,18 +116,21 @@ async function loadOverview() {
 function showDashboard() {
   el('view-auth').style.display = 'none'
   el('view-dash').style.display = ''
-  setText('kpi-address', session('bech32_address') || '—')
+  updateSidebarWallet()
   switchDashView('overview')
-  loadOverview()
 }
 
 function switchDashView(name) {
   ;['overview', 'accounts', 'watches', 'webhooks', 'keys'].forEach(function(v) {
-    el(`dash-view-${v}`).classList.toggle('hidden', v !== name)
+    el('dash-view-' + v).classList.toggle('hidden', v !== name)
   })
   qsa('.snav-item').forEach(function(a) { a.classList.toggle('active', a.dataset.view === name) })
-  if (name === 'watches')  { closeWatchForm();   loadWatches() }
-  if (name === 'webhooks') { closeWebhookForm(); loadWebhooks() }
+  var titles = { overview: 'Overview', accounts: 'Accounts', watches: 'Watches', webhooks: 'Webhooks', keys: 'API Keys' }
+  setText('dash-header-title', titles[name] || name)
+  if (name === 'overview')  loadOverview()
+  if (name === 'accounts')  loadAccounts()
+  if (name === 'watches')   { closeWatchForm();   loadWatches() }
+  if (name === 'webhooks')  { closeWebhookForm(); loadWebhooks() }
 }
 
 // ── Tab switching ─────────────────────────────────────────────────────────────
@@ -124,7 +171,7 @@ function resetGenFlow() {
 
 function renderMnemonicGrid(words) {
   el('mnemonic-grid').innerHTML = words.map(function(word, i) {
-    return `<div class="mnemonic-word"><span class="word-num">${i + 1}.</span><span class="word-text">${word}</span></div>`
+    return '<div class="mnemonic-word"><span class="word-num">' + (i + 1) + '.</span><span class="word-text">' + word + '</span></div>'
   }).join('')
 }
 
@@ -136,7 +183,6 @@ async function onGenerateKey() {
     _pendingMnemonic = Bip39.encode(Random.getBytes(32)).toString()
     _pendingWallet   = await walletFromMnemonic(_pendingMnemonic)
     var address      = await getWalletAddress(_pendingWallet)
-
     renderMnemonicGrid(_pendingMnemonic.split(' '))
     el('address-box').textContent = address
     el('gen-intro').classList.add('hidden')
@@ -150,7 +196,7 @@ async function onGenerateKey() {
 
 async function onCreateAccount() {
   if (!_pendingWallet) return
-  await sessionFromWallet(_pendingWallet)
+  await addWallet(_pendingWallet)
   showDashboard()
 }
 
@@ -162,7 +208,7 @@ function downloadPhrase(mnemonic) {
   URL.revokeObjectURL(url)
 }
 
-// ── Import flow ───────────────────────────────────────────────────────────────
+// ── Import flow (sign-in) ─────────────────────────────────────────────────────
 
 async function onImportKeys() {
   clearErrors()
@@ -171,22 +217,88 @@ async function onImportKeys() {
   try {
     var phrase = el('import-phrase').value.trim()
     if (!phrase) { showError('import-err', 'Recovery phrase is required.'); return }
-
-    try {
-      new EnglishMnemonic(phrase)
-    } catch {
-      showError('import-err', 'Invalid recovery phrase — check for typos or wrong word count.')
-      return
-    }
-
+    try { new EnglishMnemonic(phrase) }
+    catch { showError('import-err', 'Invalid recovery phrase — check for typos or wrong word count.'); return }
     var wallet = await walletFromMnemonic(phrase)
-    await sessionFromWallet(wallet)
+    await addWallet(wallet)
     showDashboard()
   } catch (err) {
     showError('import-err', err.message)
   } finally {
     btn.disabled    = false
     btn.textContent = 'Sign in'
+  }
+}
+
+// ── Accounts view (wallet management) ────────────────────────────────────────
+
+function renderAccounts() {
+  var list = el('account-list')
+  if (!list) return
+
+  // Merge in-memory wallets with session addresses for display after reload
+  var savedAddrs  = session('wallets') || (session('bech32_address') ? [session('bech32_address')] : [])
+  var memAddrs    = _wallets.map(function(w) { return w.address })
+  // Show all known addresses; prefer in-memory list if available
+  var displayList = memAddrs.length ? memAddrs : savedAddrs
+
+  if (!displayList.length) {
+    list.innerHTML = '<div class="empty-state"><div class="empty-icon">◎</div><h3>No wallets added</h3><p>Sign in with a recovery phrase to add one.</p></div>'
+    return
+  }
+
+  list.innerHTML = '<div class="item-list">' + displayList.map(function(addr, i) {
+    var isActive  = (i === _activeIndex)
+    var canSwitch = (i !== _activeIndex) && (_wallets.length > 0)
+    return '<div class="item-card">' +
+      '<div class="item-dot' + (isActive ? '' : ' item-dot-muted') + '"></div>' +
+      '<div class="item-info">' +
+        '<div class="item-primary">' + addr + '</div>' +
+        '<div class="item-secondary">' + (isActive ? 'Active' : '') + '</div>' +
+      '</div>' +
+      (canSwitch ? '<button class="btn ghost small btn-switch-wallet" data-index="' + i + '">Switch</button>' : '') +
+    '</div>'
+  }).join('') + '</div>'
+}
+
+function loadAccounts() {
+  renderAccounts()
+}
+
+// Add-wallet form inside the accounts view
+function openAddAccountForm() {
+  el('form-add-account').classList.remove('hidden')
+  el('btn-add-account').classList.add('hidden')
+  el('add-account-phrase').value = ''
+  hideFormErr('add-account-err')
+  el('add-account-phrase').focus()
+}
+function closeAddAccountForm() {
+  el('form-add-account').classList.add('hidden')
+  el('btn-add-account').classList.remove('hidden')
+  el('add-account-phrase').value = ''
+  hideFormErr('add-account-err')
+}
+
+async function onAddAccount() {
+  var phrase = el('add-account-phrase').value.trim()
+  if (!phrase) { showFormErr('add-account-err', 'Recovery phrase is required.'); return }
+  try { new EnglishMnemonic(phrase) }
+  catch { showFormErr('add-account-err', 'Invalid recovery phrase.'); return }
+
+  var btn = el('btn-confirm-add-account')
+  btn.disabled = true; btn.textContent = 'Adding…'
+  try {
+    var wallet = await walletFromMnemonic(phrase)
+    await addWallet(wallet)
+    closeAddAccountForm()
+    updateSidebarWallet()
+    renderAccounts()
+    loadOverview()
+  } catch (err) {
+    showFormErr('add-account-err', err.message)
+  } finally {
+    btn.disabled = false; btn.textContent = 'Add wallet →'
   }
 }
 
@@ -226,7 +338,7 @@ function renderWatches() {
 }
 
 async function loadWatches() {
-  var bech32 = session('bech32_address')
+  var bech32 = activeAddress()
   if (!bech32) { renderWatches(); return }
   try {
     var r = await fetch(NODE_URL + '/mehr/v1/watches/' + bech32, { signal: AbortSignal.timeout(5000) })
@@ -248,13 +360,11 @@ async function saveWatch() {
   var wallet
   try { wallet = requireWallet() } catch (e) { showFormErr('watch-err', e.message); return }
 
-  var creator = session('bech32_address')
+  var creator = activeAddress()
   var btn = el('btn-save-watch')
   btn.disabled = true; btn.textContent = 'Adding…'
   try {
-    await broadcastMsg(wallet, creator, '/mehr.v1.MsgCreateWatch', {
-      creator, network, address: evmAddr, label,
-    })
+    await broadcastMsg(wallet, creator, '/mehr.v1.MsgCreateWatch', { creator, network, address: evmAddr, label })
     closeWatchForm()
     await loadWatches()
   } catch (e) {
@@ -265,13 +375,10 @@ async function saveWatch() {
 }
 
 async function deleteWatch(id) {
-  var wallet
-  try { wallet = requireWallet() } catch { return }
-  var creator = session('bech32_address')
+  var wallet; try { wallet = requireWallet() } catch { return }
+  var creator = activeAddress()
   try {
-    await broadcastMsg(wallet, creator, '/mehr.v1.MsgDeleteWatch', {
-      creator, watchId: parseInt(id),
-    })
+    await broadcastMsg(wallet, creator, '/mehr.v1.MsgDeleteWatch', { creator, watchId: parseInt(id) })
   } catch {}
   _watches = _watches.filter(function(w) { return String(w.id) !== String(id) })
   renderWatches()
@@ -299,11 +406,7 @@ function b64urlEncode(bytes) {
   return btoa(String.fromCharCode.apply(null, bytes))
     .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
 }
-
-function generateWebhookSecret() {
-  return 'whsec_' + b64urlEncode(crypto.getRandomValues(new Uint8Array(24)))
-}
-
+function generateWebhookSecret() { return 'whsec_' + b64urlEncode(crypto.getRandomValues(new Uint8Array(24))) }
 function toHex(buf) {
   return Array.from(new Uint8Array(buf)).map(function(b) { return b.toString(16).padStart(2, '0') }).join('')
 }
@@ -328,7 +431,7 @@ function renderWebhooks() {
 }
 
 async function loadWebhooks() {
-  var bech32 = session('bech32_address')
+  var bech32 = activeAddress()
   if (!bech32) { renderWebhooks(); return }
   try {
     var r = await fetch(NODE_URL + '/mehr/v1/webhooks/' + bech32, { signal: AbortSignal.timeout(5000) })
@@ -346,17 +449,14 @@ async function saveWebhook() {
     return
   }
 
-  var wallet
-  try { wallet = requireWallet() } catch (e) { showFormErr('webhook-err', e.message); return }
+  var wallet; try { wallet = requireWallet() } catch (e) { showFormErr('webhook-err', e.message); return }
 
-  var creator = session('bech32_address')
+  var creator = activeAddress()
   var btn = el('btn-save-webhook')
   btn.disabled = true; btn.textContent = 'Adding…'
   try {
     var secretHash = toHex(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(secret)))
-    await broadcastMsg(wallet, creator, '/mehr.v1.MsgCreateWebhook', {
-      creator, url, secretHash,
-    })
+    await broadcastMsg(wallet, creator, '/mehr.v1.MsgCreateWebhook', { creator, url, secretHash })
     closeWebhookForm()
     await loadWebhooks()
   } catch (e) {
@@ -367,13 +467,10 @@ async function saveWebhook() {
 }
 
 async function deleteWebhook(id) {
-  var wallet
-  try { wallet = requireWallet() } catch { return }
-  var creator = session('bech32_address')
+  var wallet; try { wallet = requireWallet() } catch { return }
+  var creator = activeAddress()
   try {
-    await broadcastMsg(wallet, creator, '/mehr.v1.MsgDeleteWebhook', {
-      creator, webhookId: parseInt(id),
-    })
+    await broadcastMsg(wallet, creator, '/mehr.v1.MsgDeleteWebhook', { creator, webhookId: parseInt(id) })
   } catch {}
   _webhooks = _webhooks.filter(function(w) { return String(w.id) !== String(id) })
   renderWebhooks()
@@ -393,14 +490,8 @@ function closeWebhookForm() {
   hideFormErr('webhook-err')
 }
 
-function showFormErr(id, msg) {
-  var e = el(id); if (!e) return
-  e.textContent = msg; e.classList.remove('hidden')
-}
-function hideFormErr(id) {
-  var e = el(id); if (!e) return
-  e.textContent = ''; e.classList.add('hidden')
-}
+function showFormErr(id, msg) { var e = el(id); if (!e) return; e.textContent = msg; e.classList.remove('hidden') }
+function hideFormErr(id)      { var e = el(id); if (!e) return; e.textContent = ''; e.classList.add('hidden') }
 
 // ── Template mounting ─────────────────────────────────────────────────────────
 
@@ -416,13 +507,14 @@ function boot() {
   mount('tpl-auth')
   mount('tpl-dashboard')
   wireEvents()
-  if (session('bech32_address')) showDashboard()
+  var hasSavedSession = session('wallets') || session('bech32_address')
+  if (hasSavedSession) showDashboard()
   else showLanding()
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function el(id)  { return document.getElementById(id) }
+function el(id)   { return document.getElementById(id) }
 function qsa(sel) { return document.querySelectorAll(sel) }
 function setText(id, val) { var e = el(id); if (e) e.textContent = val }
 
@@ -434,7 +526,8 @@ function wireEvents() {
   })
 
   el('btn-logout').addEventListener('click', function() {
-    _activeWallet = null
+    _wallets     = []
+    _activeIndex = 0
     sessionClear()
     showLanding()
   })
@@ -452,8 +545,7 @@ function wireEvents() {
   el('btn-copy-addr').addEventListener('click', function() {
     var addr = el('address-box').textContent; if (!addr) return
     navigator.clipboard.writeText(addr).then(function() {
-      var btn = el('btn-copy-addr')
-      var orig = btn.textContent
+      var btn = el('btn-copy-addr'), orig = btn.textContent
       btn.textContent = 'Copied!'
       setTimeout(function() { btn.textContent = orig }, 1500)
     })
@@ -465,6 +557,15 @@ function wireEvents() {
 
   el('btn-create-account').addEventListener('click', onCreateAccount)
   el('btn-sign-in').addEventListener('click', onImportKeys)
+
+  // Accounts view
+  el('btn-add-account').addEventListener('click', openAddAccountForm)
+  el('btn-cancel-add-account').addEventListener('click', closeAddAccountForm)
+  el('btn-confirm-add-account').addEventListener('click', onAddAccount)
+  document.addEventListener('click', function(e) {
+    var btn = e.target.closest('.btn-switch-wallet')
+    if (btn) switchToWallet(parseInt(btn.dataset.index))
+  })
 
   // Watches
   el('btn-add-watch').addEventListener('click', openWatchForm)
@@ -487,8 +588,7 @@ function wireEvents() {
   el('btn-copy-secret').addEventListener('click', function() {
     var val = el('webhook-secret').value; if (!val) return
     navigator.clipboard.writeText(val).then(function() {
-      var btn = el('btn-copy-secret')
-      var orig = btn.textContent
+      var btn = el('btn-copy-secret'), orig = btn.textContent
       btn.textContent = 'Copied!'
       setTimeout(function() { btn.textContent = orig }, 1500)
     })

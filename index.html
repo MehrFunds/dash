@@ -110,14 +110,17 @@
           <a class="snav-item" data-view="keys">API Keys</a>
         </nav>
         <div class="sidebar-foot">
-          <div class="zone-badge" id="dash-zone-badge">—</div>
+          <div class="sidebar-wallet">
+            <span class="sidebar-wallet-label">Active wallet</span>
+            <span class="sidebar-wallet-addr mono" id="sidebar-wallet-addr">—</span>
+          </div>
           <button class="btn ghost small" id="btn-logout">Sign out</button>
         </div>
       </aside>
 
       <div class="dash-body">
         <header class="dash-header">
-          <h2>Overview</h2>
+          <h2 id="dash-header-title">Overview</h2>
         </header>
 
         <div id="dash-view-overview">
@@ -129,7 +132,31 @@
           </div>
         </div>
 
-        <div id="dash-view-accounts" class="hidden"><div class="empty-state"><div class="empty-icon">◎</div><h3>No sub-accounts yet</h3><p>Coming in the next release.</p></div></div>
+        <div id="dash-view-accounts" class="hidden">
+          <div class="view-header">
+            <h3>Wallets</h3>
+            <button class="btn primary small" id="btn-add-account">Add wallet</button>
+          </div>
+          <div class="form-card hidden" id="form-add-account">
+            <div class="form-row">
+              <label>Recovery phrase</label>
+              <textarea
+                id="add-account-phrase"
+                class="key-textarea phrase-textarea"
+                rows="3"
+                placeholder="witch collapse practice feed shame open despair creek road again ice least…"
+                spellcheck="false"
+                autocomplete="off"
+              ></textarea>
+            </div>
+            <p class="form-err hidden" id="add-account-err"></p>
+            <div class="form-actions">
+              <button class="btn ghost small" id="btn-cancel-add-account">Cancel</button>
+              <button class="btn primary small" id="btn-confirm-add-account">Add wallet →</button>
+            </div>
+          </div>
+          <div id="account-list"></div>
+        </div>
         <div id="dash-view-watches" class="hidden">
           <div class="view-header">
             <h3>Watches</h3>
