@@ -1,4 +1,4 @@
-import { Bip39, EnglishMnemonic, Random } from 'https://esm.sh/@cosmjs/crypto@0.32.4'
+import { Bip39, EnglishMnemonic, Random } from '/vendor/cosmjs-bundle.js'
 import { NODE_URL } from './chain.js'
 import { walletFromMnemonic, getWalletAddress, broadcastMsg } from './chain.js'
 
