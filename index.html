@@ -110,9 +110,19 @@
           <a class="snav-item" data-view="keys">API Keys</a>
         </nav>
         <div class="sidebar-foot">
-          <div class="sidebar-wallet">
-            <span class="sidebar-wallet-label">Active wallet</span>
-            <span class="sidebar-wallet-addr mono" id="sidebar-wallet-addr">—</span>
+          <div class="wallet-switcher" id="wallet-switcher">
+            <button class="wallet-trigger" id="btn-wallet-trigger">
+              <div class="wt-dot" id="wt-dot"></div>
+              <div class="wt-info">
+                <span class="wt-label">Wallet</span>
+                <span class="wt-addr mono" id="sidebar-wallet-addr">—</span>
+              </div>
+              <span class="wt-caret" id="wt-caret">▾</span>
+            </button>
+            <div class="wallet-dropdown hidden" id="wallet-dropdown">
+              <div class="wd-list" id="wallet-dropdown-list"></div>
+              <button class="wd-add-btn" id="btn-open-add-wallet">+ Add wallet</button>
+            </div>
           </div>
           <button class="btn ghost small" id="btn-logout">Sign out</button>
         </div>
@@ -136,24 +146,6 @@
           <div class="view-header">
             <h3>Wallets</h3>
             <button class="btn primary small" id="btn-add-account">Add wallet</button>
-          </div>
-          <div class="form-card hidden" id="form-add-account">
-            <div class="form-row">
-              <label>Recovery phrase</label>
-              <textarea
-                id="add-account-phrase"
-                class="key-textarea phrase-textarea"
-                rows="3"
-                placeholder="witch collapse practice feed shame open despair creek road again ice least…"
-                spellcheck="false"
-                autocomplete="off"
-              ></textarea>
-            </div>
-            <p class="form-err hidden" id="add-account-err"></p>
-            <div class="form-actions">
-              <button class="btn ghost small" id="btn-cancel-add-account">Cancel</button>
-              <button class="btn primary small" id="btn-confirm-add-account">Add wallet →</button>
-            </div>
           </div>
           <div id="account-list"></div>
         </div>
